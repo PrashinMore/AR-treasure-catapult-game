@@ -34,7 +34,11 @@ function MarkerDetectionScreen() {
     return () => {
       if (videoRef.current?.srcObject) {
         const tracks = videoRef.current.srcObject.getTracks()
-        tracks.forEach(track => track.stop())
+        tracks.forEach(track => {
+          track.stop()
+          track.enabled = false
+        })
+        videoRef.current.srcObject = null
       }
     }
   }, [])

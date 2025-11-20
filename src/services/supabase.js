@@ -33,6 +33,11 @@ export async function saveRewardRedemption(reward, deviceId) {
 
 export async function checkDailyPlayLimit(deviceId) {
   try {
+    // Skip if Supabase is not configured (using placeholder URL)
+    if (supabaseUrl.includes('your-project')) {
+      return false
+    }
+    
     const today = new Date().toISOString().split('T')[0]
     
     const { data, error } = await supabase
@@ -45,13 +50,18 @@ export async function checkDailyPlayLimit(deviceId) {
     if (error) throw error
     return data && data.length > 0
   } catch (error) {
-    console.error('Error checking play limit:', error)
+    // Silently fail if Supabase is not configured
     return false
   }
 }
 
 export async function recordPlay(deviceId) {
   try {
+    // Skip if Supabase is not configured (using placeholder URL)
+    if (supabaseUrl.includes('your-project')) {
+      return null
+    }
+    
     const { data, error } = await supabase
       .from('plays')
       .insert({
@@ -64,7 +74,7 @@ export async function recordPlay(deviceId) {
     if (error) throw error
     return data
   } catch (error) {
-    console.error('Error recording play:', error)
+    // Silently fail if Supabase is not configured
     return null
   }
 }

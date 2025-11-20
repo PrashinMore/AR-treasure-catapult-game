@@ -8,12 +8,22 @@ import RewardModal from './RewardModal'
 import './ARGame.css'
 
 function ARGame() {
-  const { markerDetected, arReady, arError, currentReward, startGame } = useGameStore()
+  const { markerDetected, arReady, arError, currentReward, startGame, setMarkerDetected, gameStarted } = useGameStore()
   const [isLoading, setIsLoading] = useState(true)
   const [playLimitReached, setPlayLimitReached] = useState(false)
 
+  // Set marker as detected immediately to skip marker detection screen
   useEffect(() => {
-    // Check daily play limit
+    if (!markerDetected) {
+      setMarkerDetected(true)
+    }
+    if (!gameStarted) {
+      startGame()
+    }
+  }, [markerDetected, gameStarted, setMarkerDetected, startGame])
+
+  useEffect(() => {
+    // Check daily play limit (silently fail if Supabase is not configured)
     const checkLimit = async () => {
       try {
         const deviceId = getDeviceId()
@@ -22,12 +32,14 @@ function ARGame() {
         if (hasPlayedToday) {
           setPlayLimitReached(true)
         } else {
-          // Record this play
-          await recordPlay(deviceId)
+          // Record this play (silently fail if Supabase is not configured)
+          await recordPlay(deviceId).catch(() => {
+            // Supabase not configured, continue anyway
+          })
         }
       } catch (error) {
-        console.error('Error checking play limit:', error)
-        // Continue anyway - allow play in case of error
+        // Silently continue - Supabase might not be configured
+        // This is fine for local development
       } finally {
         setIsLoading(false)
       }
