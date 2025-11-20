@@ -20,6 +20,7 @@ function ARScene() {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [dragUpdate, setDragUpdate] = useState(0) // Force re-render on drag move
   const dragStartRef = useRef(null)
   const dragCurrentRef = useRef(null)
   const [arInitialized, setArInitialized] = useState(false)
@@ -658,6 +659,8 @@ function ARScene() {
     const clientY = e.touches ? e.touches[0].clientY : e.clientY
     
     dragCurrentRef.current = { x: clientX, y: clientY }
+    // Force re-render to update visual feedback
+    setDragUpdate(prev => prev + 1)
   }
 
   const handlePointerUp = (e) => {
@@ -680,13 +683,17 @@ function ARScene() {
     }
 
     setIsDragging(false)
+    setDragUpdate(0)
     dragStartRef.current = null
     dragCurrentRef.current = null
   }
 
   // Convert screen coordinates to 3D world coordinates using raycaster
   function screenToWorld(screenX, screenY, distance = 2) {
-    if (!cameraRef.current || !sceneRef.current) return new THREE.Vector3(0, 0, 0)
+    if (!cameraRef.current) {
+      console.warn('Camera not available for screenToWorld')
+      return new THREE.Vector3(0, 0, 0)
+    }
     
     const camera = cameraRef.current
     const raycaster = new THREE.Raycaster()
@@ -699,10 +706,9 @@ function ARScene() {
     // Set raycaster to cast from camera through this screen point
     raycaster.setFromCamera(mouse, camera)
     
-    // Get a point along the ray at the specified distance
-    // We'll use the ray's direction and multiply by distance
+    // Get a point along the ray at the specified distance from camera
     const worldPos = raycaster.ray.origin.clone().add(
-      raycaster.ray.direction.multiplyScalar(distance)
+      raycaster.ray.direction.clone().multiplyScalar(distance)
     )
     
     return worldPos
@@ -710,34 +716,50 @@ function ARScene() {
 
   // Throw a key projectile
   function throwKey(start, end, dragDistance) {
-    if (!anchorRef.current?.group || !cameraRef.current) return
+    if (!anchorRef.current?.group || !cameraRef.current) {
+      console.warn('Cannot throw key: missing anchor or camera')
+      return
+    }
     
     const { useKey } = useGameStore.getState()
     useKey() // Deduct key from store
 
-    // Convert start position to 3D world coordinates (near camera)
-    const startPos = screenToWorld(start.x, start.y, 1.5)
+    // Convert start position to 3D world coordinates (closer to camera)
+    const startPos = screenToWorld(start.x, start.y, 1.2)
     
-    // Convert end position to 3D world coordinates
-    const endPos = screenToWorld(end.x, end.y, 2.5)
+    // Convert end position to 3D world coordinates (further from camera)
+    const endPos = screenToWorld(end.x, end.y, 2.0)
     
     // Calculate direction from start to end (this is the throw direction)
-    const direction = endPos.clone().sub(startPos).normalize()
+    const direction = new THREE.Vector3()
+    direction.subVectors(endPos, startPos)
+    const directionLength = direction.length()
+    
+    if (directionLength < 0.001) {
+      // If direction is too small, use a default forward direction
+      direction.set(0, 0.3, 1).normalize()
+    } else {
+      direction.normalize()
+    }
     
     // Calculate speed based on drag distance (more drag = more power)
     // Scale speed appropriately - longer drags = faster throws
-    const baseSpeed = 8
-    const speedMultiplier = Math.min(dragDistance / 100, 2) // Max 2x speed
+    const baseSpeed = 6
+    const speedMultiplier = Math.min(dragDistance / 80, 3) // Max 3x speed, more responsive
     const speed = baseSpeed * (1 + speedMultiplier)
     
-    // Add some upward component for arc
-    direction.y += 0.2 // Slight upward angle
+    // Add some upward component for arc (but preserve the drag direction)
+    direction.y += 0.15 // Slight upward angle for natural arc
     
     const velocity = direction.normalize().multiplyScalar(speed)
 
     // Create key projectile
     const key = new KeyProjectile()
     key.mesh.position.copy(startPos)
+    
+    // Make key visible and scale it appropriately
+    key.mesh.scale.set(0.15, 0.15, 0.15) // Slightly larger so it's more visible
+    key.mesh.visible = true
     
     const physics = new ProjectilePhysics(startPos, velocity)
     key.physics = physics
@@ -820,57 +842,83 @@ function ARScene() {
           </div>
           
           {/* Drag line showing trajectory */}
-          <svg
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 999
-            }}
-          >
-            <line
-              x1={dragStartRef.current.x}
-              y1={dragStartRef.current.y}
-              x2={dragCurrentRef.current.x}
-              y2={dragCurrentRef.current.y}
-              stroke="rgba(255, 215, 0, 0.6)"
-              strokeWidth="3"
-              strokeDasharray="5,5"
-            />
-            {/* Arrow head at end */}
-            <polygon
-              points={`
-                ${dragCurrentRef.current.x},${dragCurrentRef.current.y}
-                ${dragCurrentRef.current.x - 10},${dragCurrentRef.current.y - 15}
-                ${dragCurrentRef.current.x + 10},${dragCurrentRef.current.y - 15}
-              `}
-              fill="rgba(255, 215, 0, 0.8)"
-            />
-          </svg>
+          {(() => {
+            const dx = dragCurrentRef.current.x - dragStartRef.current.x
+            const dy = dragCurrentRef.current.y - dragStartRef.current.y
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI
+            
+            return (
+              <svg
+                width="100%"
+                height="100%"
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100vw',
+                  height: '100vh',
+                  pointerEvents: 'none',
+                  zIndex: 999
+                }}
+              >
+                <defs>
+                  <marker
+                    id="arrowhead"
+                    markerWidth="12"
+                    markerHeight="12"
+                    refX="6"
+                    refY="6"
+                    orient="auto"
+                  >
+                    <polygon
+                      points="0 0, 12 6, 0 12"
+                      fill="rgba(255, 215, 0, 0.9)"
+                    />
+                  </marker>
+                </defs>
+                <line
+                  x1={dragStartRef.current.x}
+                  y1={dragStartRef.current.y}
+                  x2={dragCurrentRef.current.x}
+                  y2={dragCurrentRef.current.y}
+                  stroke="rgba(255, 215, 0, 0.9)"
+                  strokeWidth="5"
+                  strokeDasharray="10,5"
+                  markerEnd="url(#arrowhead)"
+                />
+              </svg>
+            )
+          })()}
           
           {/* Power indicator */}
-          <div
-            style={{
-              position: 'fixed',
-              left: dragCurrentRef.current.x + 20,
-              top: dragCurrentRef.current.y - 20,
-              background: 'rgba(0, 0, 0, 0.7)',
-              color: 'white',
-              padding: '5px 10px',
-              borderRadius: '5px',
-              fontSize: '12px',
-              zIndex: 1001,
-              pointerEvents: 'none'
-            }}
-          >
-            Power: {Math.min(Math.round((Math.sqrt(
+          {(() => {
+            const dragDist = Math.sqrt(
               Math.pow(dragCurrentRef.current.x - dragStartRef.current.x, 2) +
               Math.pow(dragCurrentRef.current.y - dragStartRef.current.y, 2)
-            ) / 100) * 100), 100)}%
-          </div>
+            )
+            const powerPercent = Math.min(Math.round((dragDist / 200) * 100), 100)
+            return (
+              <div
+                style={{
+                  position: 'fixed',
+                  left: dragCurrentRef.current.x + 30,
+                  top: dragCurrentRef.current.y - 30,
+                  background: 'rgba(0, 0, 0, 0.8)',
+                  color: '#ffd700',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  zIndex: 1001,
+                  pointerEvents: 'none',
+                  border: '2px solid #ffd700',
+                  boxShadow: '0 0 10px rgba(255, 215, 0, 0.5)'
+                }}
+              >
+                ⚡ Power: {powerPercent}%
+              </div>
+            )
+          })()}
         </>
       )}
     </div>
